@@ -1,8 +1,3 @@
-# Meteor Addon Template
+# Meteor Extended
 
-A template to allow easy usage of the Meteor Addon API.
-
-### How to use:  
-- Clone this project
-- Use this template to create new modules/commands
-- Run the mod with Meteor.
+A collection of addons for the meteor client designed with 2b2t in mind. Any contributions are welcome. Feel free to contact me on discord (my username is **imtouchk**).
