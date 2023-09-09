@@ -4,35 +4,48 @@ import baritone.api.BaritoneAPI
 import baritone.api.pathing.goals.GoalGetToBlock
 import meteordevelopment.meteorclient.events.world.TickEvent
 import meteordevelopment.meteorclient.settings.BoolSetting
+import meteordevelopment.meteorclient.settings.IntSetting
 import meteordevelopment.meteorclient.systems.modules.Categories
 import meteordevelopment.meteorclient.systems.modules.Module
 import meteordevelopment.meteorclient.utils.Utils
+import meteordevelopment.meteorclient.utils.world.BlockUtils
 import meteordevelopment.orbit.EventHandler
 import net.imtouchk.meteorextended.MeteorExtendedAddon
+import net.imtouchk.meteorextended.PathUtils
 import net.minecraft.block.entity.ChestBlockEntity
 import net.minecraft.block.entity.ShulkerBoxBlockEntity
 import net.minecraft.item.Item
 import net.minecraft.item.Items
+import net.minecraft.util.Hand
+import net.minecraft.util.hit.BlockHitResult
 import net.minecraft.util.math.BlockPos
+import net.minecraft.util.math.Direction
 import net.minecraft.util.math.Vec3d
 
 
 class StashLooter : Module(MeteorExtendedAddon.CATEGORY, "Stash Looter", "For the lazy fucks") {
     private val sgGeneral = settings.defaultGroup
+    private val cowerIfFound = sgGeneral.add(BoolSetting.Builder()
+        .name("cower-if-found")
+        .description("Avoid players at all costs (when disabled, they are completely ignored)")
+        .defaultValue(true)
+        .build()
+    )
+    private val maxSearchArea = sgGeneral.add(
+        IntSetting.Builder()
+        .name("max-search-area")
+        .description("How far away from spawn should it search")
+        .defaultValue(100_000)
+        .build()
+    )
     private val debugMode = sgGeneral.add(BoolSetting.Builder()
         .name("debug-mode")
         .description("Display additional messages")
         .defaultValue(true)
         .build()
     )
-    private final val cowerIfFound = sgGeneral.add(BoolSetting.Builder()
-        .name("cower-if-found")
-        .description("Avoid players at all costs (when disabled, they are completely ignored)")
-        .defaultValue(true)
-        .build()
-    )
 
-    private final val desirableItems = listOf<Item>(Items.SHULKER_BOX)
+    private val desirableItems = listOf<Item>(Items.SHULKER_BOX)
 
     private enum class BotState {
         Disabled,
@@ -45,51 +58,6 @@ class StashLooter : Module(MeteorExtendedAddon.CATEGORY, "Stash Looter", "For th
     private var chestsToCheck = mutableListOf<BlockPos>()
     private var checkedChests = mutableListOf<BlockPos>()
 
-    private fun botPosition(): Vec3d {
-        return mc.player?.pos!!
-    }
-
-    private fun distanceToBlock(position: BlockPos): Double {
-        return botPosition().distanceTo(Vec3d(
-            position.x.toDouble(),
-            position.y.toDouble(),
-            position.z.toDouble()
-        ))
-    }
-
-    private fun setNewGoal(position: BlockPos) {
-        stopPathing()
-        startPathing(position)
-    }
-
-    private fun isCurrentlyPathing(): Boolean {
-        val pathingBehavior = BaritoneAPI.getProvider().primaryBaritone.pathingBehavior
-        return pathingBehavior.isPathing
-    }
-
-    private fun startPathing(position: BlockPos) {
-        val goalProcess = BaritoneAPI.getProvider().primaryBaritone.customGoalProcess
-        val goal = GoalGetToBlock(position)
-        goalProcess.setGoalAndPath(goal)
-    }
-
-    private fun stopPathing() {
-        val pathingBehavior = BaritoneAPI.getProvider().primaryBaritone.pathingBehavior
-        pathingBehavior.cancelEverything()
-    }
-
-    private fun roam() {
-        stopPathing()
-        val currentPosition = mc.player?.pos ?: return
-        val exploreProcess = BaritoneAPI.getProvider().primaryBaritone.exploreProcess
-        exploreProcess.explore(
-            currentPosition.x.toInt(),
-            currentPosition.z.toInt()
-        )
-
-        currentState = BotState.Roaming
-        debugInfo("Current state: ROAMING")
-    }
 
     // TODO: Check if this shit actually works lol
     private fun runFromPlayers() {
@@ -108,7 +76,7 @@ class StashLooter : Module(MeteorExtendedAddon.CATEGORY, "Stash Looter", "For th
             .normalize()
             .multiply(100.0)
 
-        stopPathing()
+        PathUtils.stopAny()
         val goalProcess = BaritoneAPI.getProvider().primaryBaritone.customGoalProcess
         val goal = GoalGetToBlock(BlockPos(
             (botPos.x + bestOpposite.x).toInt(),
@@ -148,15 +116,18 @@ class StashLooter : Module(MeteorExtendedAddon.CATEGORY, "Stash Looter", "For th
 
     private fun goToNearestChest() {
         val chest = getNearestChest()
-        setNewGoal(chest)
 
+        PathUtils.setGoal(chest)
         currentState = BotState.Checking
         debugInfo("Current state: CHECKING. (Destination: ${chest.x}, ${chest.y}, ${chest.z})")
     }
 
-    private fun debugInfo(message: String) {
-        if(debugMode.get())
-            info(message)
+    private fun roam() {
+        // TODO: check boundaries
+
+        PathUtils.explore(botPosition())
+        currentState = BotState.Roaming
+        debugInfo("Current state: ROAMING")
     }
 
     @EventHandler
@@ -174,26 +145,28 @@ class StashLooter : Module(MeteorExtendedAddon.CATEGORY, "Stash Looter", "For th
             BotState.Roaming -> {
                 if(chestsToCheck.isEmpty())
                     lookForNewChests()
-                else goToNearestChest()
+                else
+                    goToNearestChest()
             }
             BotState.Checking -> {
-                if (isCurrentlyPathing()) {
-                    return
-                }
-
-                // TODO: Baritone presumably arrived at destination
-                // do a check to confirm it, and if it is true either loot the chest or break the shulker box
                 val chest = getNearestChest()
                 if (distanceToBlock(chest) <= 5) {
                     val entity = mc.player?.clientWorld?.getBlockEntity(chest)
                     checkedChests.add(chest)
                     chestsToCheck.remove(chest)
-                } else {
-                    debugInfo("not implemented")
+
+                    val chestPos = entity?.pos!!
+                    val block = BlockHitResult(
+                        Vec3d(chestPos.x.toDouble(), chestPos.y.toDouble(), chestPos.z.toDouble()),
+                        Direction.UP,
+                        chestPos,
+                        false
+                    )
+                    BlockUtils.interact(block, Hand.MAIN_HAND, true)
+                    debugInfo("Checked chest")
+                    // roam()
                     currentState = BotState.Disabled
                 }
-
-                roam()
             }
             else -> {}
         }
@@ -204,7 +177,24 @@ class StashLooter : Module(MeteorExtendedAddon.CATEGORY, "Stash Looter", "For th
     }
 
     override fun onDeactivate() {
-        info("Stash Finder disabled.")
+        PathUtils.stopAny()
         currentState = BotState.Disabled
+    }
+
+    private fun debugInfo(message: String) {
+        if(debugMode.get())
+            info(message)
+    }
+
+    private fun botPosition(): Vec3d {
+        return mc.player?.pos!!
+    }
+
+    private fun distanceToBlock(position: BlockPos): Double {
+        return botPosition().distanceTo(Vec3d(
+            position.x.toDouble(),
+            position.y.toDouble(),
+            position.z.toDouble()
+        ))
     }
 }
