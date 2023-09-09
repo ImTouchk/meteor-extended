@@ -2,18 +2,25 @@ package net.imtouchk.meteorextended.modules
 
 import baritone.api.BaritoneAPI
 import baritone.api.pathing.goals.GoalGetToBlock
+import meteordevelopment.meteorclient.events.packets.InventoryEvent
 import meteordevelopment.meteorclient.events.world.TickEvent
 import meteordevelopment.meteorclient.settings.BoolSetting
+import meteordevelopment.meteorclient.settings.EnumSetting
 import meteordevelopment.meteorclient.settings.IntSetting
 import meteordevelopment.meteorclient.systems.modules.Categories
 import meteordevelopment.meteorclient.systems.modules.Module
 import meteordevelopment.meteorclient.utils.Utils
+import meteordevelopment.meteorclient.utils.entity.EntityUtils
 import meteordevelopment.meteorclient.utils.world.BlockUtils
 import meteordevelopment.orbit.EventHandler
+import net.fabricmc.fabric.api.event.player.PlayerBlockBreakEvents
 import net.imtouchk.meteorextended.MeteorExtendedAddon
 import net.imtouchk.meteorextended.PathUtils
 import net.minecraft.block.entity.ChestBlockEntity
 import net.minecraft.block.entity.ShulkerBoxBlockEntity
+import net.minecraft.entity.Entity
+import net.minecraft.entity.ItemEntity
+import net.minecraft.entity.player.PlayerEntity
 import net.minecraft.item.Item
 import net.minecraft.item.Items
 import net.minecraft.util.Hand
@@ -44,20 +51,29 @@ class StashLooter : Module(MeteorExtendedAddon.CATEGORY, "Stash Looter", "For th
         .defaultValue(true)
         .build()
     )
-
-    private val desirableItems = listOf<Item>(Items.SHULKER_BOX)
+    private val otherDesirableItems = listOf<Item>(
+        Items.ENCHANTED_GOLDEN_APPLE,
+        Items.BEACON,
+        Items.ENDER_CHEST
+    )
+    private enum class StopAction {
+        Disconnect,
+        Disable
+    }
 
     private enum class BotState {
         Disabled,
         Roaming,
         Checking,
         Cowering,
+        PickingDrop,
     }
+
+    private val stopAction = StopAction.Disconnect
 
     private var currentState = BotState.Disabled
     private var chestsToCheck = mutableListOf<BlockPos>()
     private var checkedChests = mutableListOf<BlockPos>()
-
 
     // TODO: Check if this shit actually works lol
     private fun runFromPlayers() {
@@ -89,9 +105,20 @@ class StashLooter : Module(MeteorExtendedAddon.CATEGORY, "Stash Looter", "For th
         debugInfo("Current state: COWERING (Destination: ${goal.x}, ${goal.y}, ${goal.z})")
     }
 
+    private fun getPlayersNearby(): List<Entity> {
+        val players = mutableListOf<Entity>()
+        for(entity in mc.world?.entities!!) {
+            if(entity !is PlayerEntity) continue
+            if(entity == mc.player) continue
+            if(entity == mc.cameraEntity && mc.options.perspective.isFirstPerson) continue
+            if(EntityUtils.isInRenderDistance(entity))
+                players.add(entity)
+        }
+        return players
+    }
+
     private fun arePlayersNearby(): Boolean {
-        val players = mc.player?.clientWorld?.players
-        return players == null || players.size == 0
+        return getPlayersNearby().isNotEmpty()
     }
 
     private fun lookForNewChests() {
@@ -130,15 +157,26 @@ class StashLooter : Module(MeteorExtendedAddon.CATEGORY, "Stash Looter", "For th
         debugInfo("Current state: ROAMING")
     }
 
+    fun onShulkerPickedUp() {
+        debugInfo("Shulker box picked up")
+        roam()
+    }
+
+    @EventHandler
+    private fun onInventoryOpen(event: InventoryEvent) {
+        // Could have only one for loop here but shulkers are higher priority than anything else
+        for(stack in event.packet.contents)
+            if(isShulkerBox(stack.item))
+                mc.player?.inventory?.insertStack(stack)
+
+        for(stack in event.packet.contents)
+            if(otherDesirableItems.contains(stack.item))
+                mc.player?.inventory?.insertStack(stack)
+    }
+
     @EventHandler
     private fun onTick(event: TickEvent.Pre) {
         assert(mc.world != null)
-
-        if(arePlayersNearby() && cowerIfFound.get()) {
-            runFromPlayers()
-            // TODO: disconnect when safe (option)
-            return
-        }
 
         when(currentState) {
             BotState.Disabled -> return
@@ -148,6 +186,22 @@ class StashLooter : Module(MeteorExtendedAddon.CATEGORY, "Stash Looter", "For th
                 else
                     goToNearestChest()
             }
+            BotState.PickingDrop -> {
+                val entities = mc.world?.entities!!
+                for(entity in entities) {
+                    if(entity !is ItemEntity || entity.distanceTo(mc.player) > 5) continue
+
+                    val item = entity as ItemEntity
+                    if(!isShulkerBox(item.stack.item)) continue
+
+                    PathUtils.setGoal(BlockPos(
+                        entity.pos.x.toInt(),
+                        entity.pos.y.toInt(),
+                        entity.pos.z.toInt()
+                    ))
+                    currentState = BotState.PickingDrop
+                }
+            }
             BotState.Checking -> {
                 val chest = getNearestChest()
                 if (distanceToBlock(chest) <= 5) {
@@ -155,20 +209,47 @@ class StashLooter : Module(MeteorExtendedAddon.CATEGORY, "Stash Looter", "For th
                     checkedChests.add(chest)
                     chestsToCheck.remove(chest)
 
-                    val chestPos = entity?.pos!!
-                    val block = BlockHitResult(
-                        Vec3d(chestPos.x.toDouble(), chestPos.y.toDouble(), chestPos.z.toDouble()),
-                        Direction.UP,
-                        chestPos,
-                        false
-                    )
-                    BlockUtils.interact(block, Hand.MAIN_HAND, true)
-                    debugInfo("Checked chest")
-                    // roam()
-                    currentState = BotState.Disabled
+                    if(entity is ShulkerBoxBlockEntity) {
+                        debugInfo("Shulker box!")
+
+                        if(!BlockUtils.canBreak(entity.pos)) return
+                        BlockUtils.breakBlock(entity.pos, true)
+                        currentState = BotState.PickingDrop
+                    } else {
+                        val chestPos = entity?.pos!!
+                        val block = BlockHitResult(
+                            Vec3d(chestPos.x.toDouble(), chestPos.y.toDouble(), chestPos.z.toDouble()),
+                            Direction.UP,
+                            chestPos,
+                            false
+                        )
+                        BlockUtils.interact(block, Hand.MAIN_HAND, true)
+
+                    }
+                    debugInfo("Chest checked")
+                    roam()
                 }
             }
             else -> {}
+        }
+
+        if(arePlayersNearby())
+            stop()
+    }
+
+    private fun stop() {
+        PathUtils.stopAny()
+        when(stopAction) {
+            StopAction.Disable -> {
+                currentState = BotState.Disabled
+                toggle()
+            }
+            StopAction.Disconnect -> {
+                currentState = BotState.Disabled
+                mc.world?.disconnect()
+                toggle()
+            }
+            else -> throw Exception()
         }
     }
 
@@ -196,5 +277,32 @@ class StashLooter : Module(MeteorExtendedAddon.CATEGORY, "Stash Looter", "For th
             position.y.toDouble(),
             position.z.toDouble()
         ))
+    }
+
+    companion object {
+        @JvmStatic public fun isShulkerBox(item: Item): Boolean {
+            val shulkerBlockItems = listOf<Item>(
+                Items.SHULKER_BOX,
+                Items.BLACK_SHULKER_BOX,
+                Items.GREEN_SHULKER_BOX,
+                Items.MAGENTA_SHULKER_BOX,
+                Items.BLACK_SHULKER_BOX,
+                Items.BLUE_SHULKER_BOX,
+                Items.BROWN_SHULKER_BOX,
+                Items.CYAN_SHULKER_BOX,
+                Items.GRAY_SHULKER_BOX,
+                Items.LIGHT_BLUE_SHULKER_BOX,
+                Items.LIGHT_GRAY_SHULKER_BOX,
+                Items.LIME_SHULKER_BOX,
+                Items.PURPLE_SHULKER_BOX,
+                Items.RED_SHULKER_BOX,
+                Items.WHITE_SHULKER_BOX,
+                Items.YELLOW_SHULKER_BOX,
+                Items.PINK_SHULKER_BOX,
+                Items.ORANGE_SHULKER_BOX
+            )
+
+            return shulkerBlockItems.contains(item)
+        }
     }
 }
