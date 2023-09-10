@@ -21,7 +21,9 @@ import net.minecraft.block.entity.ShulkerBoxBlockEntity
 import net.minecraft.entity.Entity
 import net.minecraft.entity.ItemEntity
 import net.minecraft.entity.player.PlayerEntity
+import net.minecraft.inventory.Inventory
 import net.minecraft.item.Item
+import net.minecraft.item.ItemStack
 import net.minecraft.item.Items
 import net.minecraft.util.Hand
 import net.minecraft.util.hit.BlockHitResult
@@ -74,6 +76,7 @@ class StashLooter : Module(MeteorExtendedAddon.CATEGORY, "Stash Looter", "For th
     private var currentState = BotState.Disabled
     private var chestsToCheck = mutableListOf<BlockPos>()
     private var checkedChests = mutableListOf<BlockPos>()
+    private var initialInventoryState = mutableListOf<Item>()
 
     // TODO: Check if this shit actually works lol
     private fun runFromPlayers() {
@@ -228,11 +231,27 @@ class StashLooter : Module(MeteorExtendedAddon.CATEGORY, "Stash Looter", "For th
                     }
                     debugInfo("Chest checked")
                     roam()
+                } else {
+                    val goalProcess = BaritoneAPI.getProvider().primaryBaritone.customGoalProcess
+                    if(!goalProcess.isActive) goToNearestChest()
+                    val goal = goalProcess.goal as GoalGetToBlock
+                    if(!chestsToCheck.contains(BlockPos(goal.x, goal.y, goal.z)))
+                        goToNearestChest()
                 }
             }
             else -> {}
         }
 
+        // Remove useless items
+//        val inventory = mc.player?.inventory!!
+//        for(stack in inventory.main) {
+//            if(initialInventoryState.contains(stack.item)) continue
+//            if(isShulkerBox(stack.item)) continue
+//            if(otherDesirableItems.contains(stack.item)) continue
+//            mc.player?.dropItem(stack, false)
+//        }
+
+        // Player check
         if(arePlayersNearby())
             stop()
     }
@@ -254,11 +273,17 @@ class StashLooter : Module(MeteorExtendedAddon.CATEGORY, "Stash Looter", "For th
     }
 
     override fun onActivate() {
+        val inventory = mc.player?.inventory!!
+        for(stack in inventory.main) {
+            initialInventoryState.add(stack.item)
+        }
+
         roam()
     }
 
     override fun onDeactivate() {
         PathUtils.stopAny()
+        initialInventoryState.clear()
         currentState = BotState.Disabled
     }
 
