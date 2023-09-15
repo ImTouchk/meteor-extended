@@ -16,8 +16,9 @@ class PathUtils {
         }
 
         fun stopAny() {
-            val pathingBehavior = BaritoneAPI.getProvider().primaryBaritone.pathingBehavior
-            pathingBehavior.cancelEverything()
+            val primaryBaritone = BaritoneAPI.getProvider().primaryBaritone
+            primaryBaritone.followProcess.cancel()
+            primaryBaritone.pathingBehavior.cancelEverything()
         }
 
         fun setGoal(pos: BlockPos) {
@@ -36,44 +37,69 @@ class PathUtils {
             )
         }
 
-        // Returns false if NewChunks is not activated
-        fun isInNewChunk(pos: BlockPos): Boolean {
+        fun getNearbyOldChunks(): List<ChunkPos> {
             val module = InteropUtils.getMeteorModule("new-chunks") as NewChunks
-            if(!module.isActive) return false
-
-            return module.newChunks.contains(ChunkPos(pos))
+            if(!module.isActive) return listOf<ChunkPos>()
+            return module.oldChunks.toList()
         }
 
-        // Returns current chunk if NewChunks is not active
-        fun getNearestOldChunk(pos: BlockPos): ChunkPos {
+        fun getNearbyNewChunks(): List<ChunkPos> {
             val module = InteropUtils.getMeteorModule("new-chunks") as NewChunks
-            if(!module.isActive) return ChunkPos(pos)
+            if(!module.isActive) return listOf<ChunkPos>()
+            return module.newChunks.toList()
+        }
 
-            val oldChunks = module.oldChunks
-            if(oldChunks.isEmpty()) return ChunkPos(pos) // TODO: do something more intelligent
+        fun getNearestOldChunk(pos: BlockPos, ignoreSelf: Boolean): ChunkPos {
+            val oldChunks = getNearbyOldChunks()
+            if(oldChunks.isEmpty()) return ChunkPos(pos)
 
             val current = ChunkPos(pos)
             var nearest = oldChunks[0]
             for(chunk in oldChunks) {
-                if(chunk.getChebyshevDistance(current) < nearest.getChebyshevDistance(current))
+                if(ignoreSelf && chunk == ChunkPos(pos))
+                    continue
+
+                if(chunk.getChebyshevDistance(current) <= nearest.getChebyshevDistance(current))
                     nearest = chunk
             }
             return nearest
         }
 
-        // Returns true if NewChunks is not active
-        fun isInOldChunk(pos: BlockPos): Boolean {
-            val module = InteropUtils.getMeteorModule("new-chunks") as NewChunks
-            if(!module.isActive) return true
+        fun getNearestNewChunk(pos: BlockPos, ignoreSelf: Boolean): ChunkPos {
+            val newChunks = getNearbyNewChunks()
+            if(newChunks.isEmpty()) return ChunkPos(pos)
 
             val current = ChunkPos(pos)
-            val oldChunks = module.oldChunks
-            for(chunk in oldChunks) {
-                if(chunk.x == current.x && chunk.z == current.z)
-                    return true
-            }
+            var nearest = newChunks[0]
+            for(chunk in newChunks) {
+                if(ignoreSelf && chunk == ChunkPos(pos))
+                    continue
 
-            return false
+                if(chunk.getChebyshevDistance(current) <= nearest.getChebyshevDistance(current))
+                    nearest = chunk
+            }
+            return nearest
         }
+
+        fun isNewChunk(chunkPos: ChunkPos): Boolean {
+            return getNearbyNewChunks()
+                .contains(chunkPos)
+        }
+
+        fun isOldChunk(chunkPos: ChunkPos): Boolean {
+            return getNearbyOldChunks()
+                .contains(chunkPos)
+        }
+
+        fun isInNewChunk(pos: BlockPos): Boolean {
+            return getNearbyNewChunks()
+                .contains(ChunkPos(pos))
+        }
+
+        fun isInOldChunk(pos: BlockPos): Boolean {
+            return getNearbyOldChunks()
+                     .contains(ChunkPos(pos))
+        }
+
     }
 }
