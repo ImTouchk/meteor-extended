@@ -5,15 +5,12 @@ import baritone.api.pathing.goals.GoalGetToBlock
 import meteordevelopment.meteorclient.events.packets.InventoryEvent
 import meteordevelopment.meteorclient.events.world.TickEvent
 import meteordevelopment.meteorclient.settings.BoolSetting
-import meteordevelopment.meteorclient.settings.EnumSetting
 import meteordevelopment.meteorclient.settings.IntSetting
-import meteordevelopment.meteorclient.systems.modules.Categories
 import meteordevelopment.meteorclient.systems.modules.Module
 import meteordevelopment.meteorclient.utils.Utils
 import meteordevelopment.meteorclient.utils.entity.EntityUtils
 import meteordevelopment.meteorclient.utils.world.BlockUtils
 import meteordevelopment.orbit.EventHandler
-import net.fabricmc.fabric.api.event.player.PlayerBlockBreakEvents
 import net.imtouchk.meteorextended.MeteorExtendedAddon
 import net.imtouchk.meteorextended.PathUtils
 import net.minecraft.block.entity.BlockEntity
@@ -22,38 +19,36 @@ import net.minecraft.block.entity.ShulkerBoxBlockEntity
 import net.minecraft.entity.Entity
 import net.minecraft.entity.ItemEntity
 import net.minecraft.entity.player.PlayerEntity
-import net.minecraft.inventory.Inventory
 import net.minecraft.item.Item
-import net.minecraft.item.ItemStack
 import net.minecraft.item.Items
 import net.minecraft.util.Hand
 import net.minecraft.util.hit.BlockHitResult
 import net.minecraft.util.math.BlockPos
+import net.minecraft.util.math.ChunkPos
 import net.minecraft.util.math.Direction
 import net.minecraft.util.math.Vec3d
+import kotlin.system.measureTimeMillis
 
 
-class StashLooter : Module(MeteorExtendedAddon.CATEGORY, "Stash Looter", "For the lazy fucks") {
+class BaseRaider : Module(MeteorExtendedAddon.CATEGORY, "Base Raider", "Tries to find bases") {
     private val sgGeneral = settings.defaultGroup
-    private val cowerIfFound = sgGeneral.add(BoolSetting.Builder()
-        .name("cower-if-found")
-        .description("Avoid players at all costs (when disabled, they are completely ignored)")
-        .defaultValue(true)
-        .build()
-    )
+
     private val maxSearchArea = sgGeneral.add(
         IntSetting.Builder()
         .name("max-search-area")
-        .description("How far away from spawn should it search")
-        .defaultValue(100_000)
+        .description("How far away from spawn should it search (in thousands)")
+        .defaultValue(100)
         .build()
     )
+
     private val debugMode = sgGeneral.add(BoolSetting.Builder()
         .name("debug-mode")
         .description("Display additional messages")
         .defaultValue(true)
         .build()
     )
+
+
     private val otherDesirableItems = listOf<Item>(
         Items.ENCHANTED_GOLDEN_APPLE,
         Items.BEACON,
@@ -185,9 +180,29 @@ class StashLooter : Module(MeteorExtendedAddon.CATEGORY, "Stash Looter", "For th
                 mc.player?.inventory?.insertStack(stack)
     }
 
+    val checkedChunks = mutableListOf<ChunkPos>()
+    val chunkAnalyzer = ChunkAnalyzer(mc)
+
     @EventHandler
     private fun onTick(event: TickEvent.Pre) {
         assert(mc.world != null)
+
+        val chunks = Utils.chunks()
+        for(chunk in chunks) {
+            if(checkedChunks.contains(chunk.pos))
+                continue
+
+            lateinit var result: ChunkAnalyzer.QueryResults
+            val elapsed = measureTimeMillis { result = chunkAnalyzer.queryChunk(chunk.pos) }
+            checkedChunks.add(chunk.pos)
+            println("========== ${chunk.pos} ANALYZED IN ${elapsed}ms")
+            println("Base probability: ${result.baseProbability}")
+            println("Potential valuables: ${result.potentialValuables}")
+            return
+        }
+
+
+        return
 
         if(currentState == BotState.Disabled)
             return
@@ -291,6 +306,8 @@ class StashLooter : Module(MeteorExtendedAddon.CATEGORY, "Stash Looter", "For th
     }
 
     override fun onActivate() {
+        return
+
         val inventory = mc.player?.inventory!!
         for(stack in inventory.main) {
             initialInventoryState.add(stack.item)
@@ -300,6 +317,8 @@ class StashLooter : Module(MeteorExtendedAddon.CATEGORY, "Stash Looter", "For th
     }
 
     override fun onDeactivate() {
+        return
+
         PathUtils.stopAny()
         initialInventoryState.clear()
         currentState = BotState.Disabled
@@ -323,7 +342,8 @@ class StashLooter : Module(MeteorExtendedAddon.CATEGORY, "Stash Looter", "For th
     }
 
     companion object {
-        @JvmStatic public fun isShulkerBox(item: Item): Boolean {
+        @JvmStatic
+        fun isShulkerBox(item: Item): Boolean {
             val shulkerBlockItems = listOf<Item>(
                 Items.SHULKER_BOX,
                 Items.BLACK_SHULKER_BOX,

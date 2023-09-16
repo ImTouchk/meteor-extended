@@ -6,12 +6,10 @@ import meteordevelopment.meteorclient.systems.modules.Modules;
 
 public class InteropUtils {
     static public Module getMeteorModule(String name) {
-        var modules = Systems.get(Modules.class);
-        return modules.get(name);
+        return Modules.get().get(name);
     }
 
     static public <T extends Module> T getMeteorModule(Class<T> klass) {
-        var modules = Systems.get(Modules.class);
-        return modules.get(klass);
+        return Modules.get().get(klass);
     }
 }

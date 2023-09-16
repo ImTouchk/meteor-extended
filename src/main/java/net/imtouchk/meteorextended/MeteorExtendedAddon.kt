@@ -5,7 +5,7 @@ import meteordevelopment.meteorclient.addons.MeteorAddon
 import meteordevelopment.meteorclient.systems.modules.Category
 import meteordevelopment.meteorclient.systems.modules.Modules
 import net.imtouchk.meteorextended.modules.NewChunks
-import net.imtouchk.meteorextended.modules.BaseFinder
+import net.imtouchk.meteorextended.modules.BaseRaider
 import net.imtouchk.meteorextended.modules.Debugger
 import org.apache.logging.log4j.LogManager
 import org.apache.logging.log4j.Logger
@@ -27,7 +27,7 @@ class MeteorExtendedAddon : MeteorAddon() {
         val modules = Modules.get()
         modules.add(Debugger())
         modules.add(NewChunks())
-        modules.add(BaseFinder())
+        modules.add(BaseRaider())
     }
 
     override fun onRegisterCategories() {
