@@ -1,12 +1,15 @@
 package net.imtouchk.meteorextended.modules
 
+import meteordevelopment.meteorclient.utils.Utils
 import net.imtouchk.meteorextended.PathUtils
 import net.minecraft.block.Block
 import net.minecraft.block.Blocks
+import net.minecraft.block.entity.BlockEntity
 import net.minecraft.block.entity.ChestBlockEntity
 import net.minecraft.block.entity.EnderChestBlockEntity
 import net.minecraft.block.entity.ShulkerBoxBlockEntity
 import net.minecraft.client.MinecraftClient
+import net.minecraft.entity.ItemEntity
 import net.minecraft.util.math.BlockPos
 import net.minecraft.util.math.ChunkPos
 
@@ -40,7 +43,12 @@ class ChunkAnalyzer(private val mc: MinecraftClient) {
         const val NEW_CHUNKS_THRESHOLD = 4 // How many new chunks are too many?
     }
 
-    class QueryResults(val baseProbability: Float, val potentialValuables: List<BlockPos>)
+    class QueryResults(
+        val pos: ChunkPos,
+        val baseProbability: Float,
+        val potentialLoot: MutableList<BlockEntity>,
+        val itemDrops: MutableList<ItemEntity>
+    )
 
     fun isBlockWithinRadius(pos: BlockPos, type: Block, radius: Int): Boolean {
         for(z in -radius..radius) {
@@ -75,42 +83,45 @@ class ChunkAnalyzer(private val mc: MinecraftClient) {
         val chunk = mc.player?.clientWorld?.getChunk(chunkPos.x, chunkPos.z)
 
         // Check chests and shulkers
-        val potentialValuables = mutableListOf<BlockPos>()
-        for(entity in chunk?.blockEntities!!) {
+        // chunk.blockEntities should've been used instead of Utils.blockEntities() but it seems to always be empty so idk
+        val potentialLoot = mutableListOf<BlockEntity>()
+        for(entity in Utils.blockEntities()) {
+            if(ChunkPos(entity.pos) != chunkPos)
+                continue
+
             if(entity is EnderChestBlockEntity){
                 probability += ContainerProbabilityMultipliers.ENDER_CHEST
-                println("ChunkAnalyzer.queryChunk: Ender chest found")
             }
             else if(entity is ShulkerBoxBlockEntity) {
                 probability += ContainerProbabilityMultipliers.SHULKER_BOX
-                potentialValuables.add(entity.pos)
-                println("ChunkAnalyzer.queryChunk: Shulker box found")
+                potentialLoot.add(entity)
             }
             else if(entity is ChestBlockEntity) {
                 val chestProbability = playerChestProbability(entity)
                 probability += chestProbability
                 if(chestProbability >= ContainerProbabilityMultipliers.CHEST)
-                    potentialValuables.add(entity.pos)
-
-                println("ChunkAnalyzer.queryChunk: Chest found; value multiplier: ${chestProbability}")
+                    potentialLoot.add(entity)
             }
             else continue
         }
 
+        // TODO: Check item entities
+
+        val beforeBlockAnalysis = probability
+        var potentialBlocksFound = 0
         // Check all blocks (probably EXTREMELY slow)
         for(x in 0..15) {
             for(y in 0..383) {
                 for(z in 0..15) {
                     val blockPos = chunkPos.getBlockPos(x, y, z)
-                    val blockState = chunk.getBlockState(blockPos)
+                    val blockState = chunk?.getBlockState(blockPos)
 
                     val multiplier = BlockProbabilityMultipliers
                                         .getOrDefault(blockState?.block?.defaultState, 0f)
 
                     probability += multiplier
-                    if(multiplier != 0f) {
-                        println("ChunkAnalyzer.queryChunk: Found ${blockState?.block?.name}. Base probability increased by ${multiplier}")
-                    }
+                    if(multiplier != 0f)
+                        potentialBlocksFound++
                 }
             }
         }
@@ -118,6 +129,6 @@ class ChunkAnalyzer(private val mc: MinecraftClient) {
         // Cap values between [0, 100] to be more user-friendly
         if(probability > 100f) probability = 100f
         if(probability < 0f) probability = 0f
-        return QueryResults(probability, potentialValuables)
+        return QueryResults(chunkPos, probability, potentialLoot, mutableListOf())
     }
 }
