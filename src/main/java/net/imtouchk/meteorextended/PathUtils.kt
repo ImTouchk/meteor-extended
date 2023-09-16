@@ -28,6 +28,12 @@ class PathUtils {
             goalProcess.setGoalAndPath(goal)
         }
 
+        fun getCurrentGoal(): BlockPos {
+            val goalProcess = BaritoneAPI.getProvider().primaryBaritone.customGoalProcess
+            if(goalProcess.goal == null) return BlockPos(0, 0, 0)
+            return (goalProcess.goal as GoalGetToBlock).goalPos
+        }
+
         fun explore(currentPos: Vec3d) {
             stopAny()
             val exploreProcess = BaritoneAPI.getProvider().primaryBaritone.exploreProcess
@@ -35,6 +41,37 @@ class PathUtils {
                 currentPos.x.toInt(),
                 currentPos.z.toInt()
             )
+        }
+
+        fun isExploring(): Boolean {
+            val exploreProcess = BaritoneAPI.getProvider().primaryBaritone.exploreProcess
+            return exploreProcess.isActive
+        }
+
+        fun getSurroundingOldChunks(pos: ChunkPos): Int {
+            val neighbors = listOf(
+                ChunkPos(pos.x, pos.z + 1),
+                ChunkPos(pos.x, pos.z - 1),
+
+                ChunkPos(pos.x + 1, pos.z + 1),
+                ChunkPos(pos.x + 1, pos.z),
+                ChunkPos(pos.x + 1, pos.z - 1),
+
+                ChunkPos(pos.x - 1, pos.z + 1),
+                ChunkPos(pos.x - 1, pos.z),
+                ChunkPos(pos.x - 1, pos.z - 1)
+            )
+
+            val module = InteropUtils.getMeteorModule(NewChunks::class.java)
+            if(module == null || !module.isActive) return 0
+
+            var count = 0
+            synchronized(module.oldChunks) {
+                for(neighbor in neighbors)
+                    if(module.oldChunks.contains(neighbor))
+                        count++
+            }
+            return count
         }
 
         fun getNearbyOldChunks(): List<ChunkPos> {
