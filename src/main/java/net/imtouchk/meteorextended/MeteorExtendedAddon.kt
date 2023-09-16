@@ -4,7 +4,9 @@ import meteordevelopment.meteorclient.MeteorClient
 import meteordevelopment.meteorclient.addons.MeteorAddon
 import meteordevelopment.meteorclient.systems.modules.Category
 import meteordevelopment.meteorclient.systems.modules.Modules
-import net.imtouchk.meteorextended.modules.StashLooter
+import net.imtouchk.meteorextended.modules.NewChunks
+import net.imtouchk.meteorextended.modules.BaseFinder
+import net.imtouchk.meteorextended.modules.Debugger
 import org.apache.logging.log4j.LogManager
 import org.apache.logging.log4j.Logger
 import java.lang.invoke.MethodHandles
@@ -22,7 +24,10 @@ class MeteorExtendedAddon : MeteorAddon() {
             ) as MethodHandles.Lookup
         }
 
-        Modules.get().add(StashLooter())
+        val modules = Modules.get()
+        modules.add(Debugger())
+        modules.add(NewChunks())
+        modules.add(BaseFinder())
     }
 
     override fun onRegisterCategories() {
@@ -34,7 +39,7 @@ class MeteorExtendedAddon : MeteorAddon() {
     }
 
     companion object {
-        val LOG: Logger = LogManager.getLogger()
-        val CATEGORY: Category = Category("Meteor Extended")
+        @JvmStatic val LOG: Logger = LogManager.getLogger()
+        @JvmStatic val CATEGORY: Category = Category("Meteor Extended")
     }
 }

@@ -39,66 +39,87 @@ class PathUtils {
 
         fun getNearbyOldChunks(): List<ChunkPos> {
             val module = InteropUtils.getMeteorModule(NewChunks::class.java)
-            if(module == null || !module.isActive) return listOf<ChunkPos>()
-            return module.oldChunks.toList()
+            if(module == null || !module.isActive) return listOf()
+            synchronized(module.oldChunks) {
+                val set = HashSet(module.oldChunks)
+                return set.toList()
+            }
         }
 
         fun getNearbyNewChunks(): List<ChunkPos> {
             val module = InteropUtils.getMeteorModule(NewChunks::class.java)
-            if(module == null || !module.isActive) return listOf<ChunkPos>()
-            return module.newChunks.toList()
+            if(module == null || !module.isActive) return listOf()
+            synchronized(module.newChunks) {
+                val set = HashSet(module.newChunks)
+                return set.toList()
+            }
         }
 
         fun getNearestOldChunk(pos: BlockPos, ignoreSelf: Boolean): ChunkPos {
-            val oldChunks = getNearbyOldChunks()
-            if(oldChunks.isEmpty()) return ChunkPos(pos)
+            val module = InteropUtils.getMeteorModule(NewChunks::class.java)
+            if(module == null || !module.isActive) return ChunkPos(BlockPos(0, 0, 0))
+            synchronized(module.oldChunks) {
+                if(module.oldChunks.isEmpty())
+                    return ChunkPos(BlockPos(0, 0, 0))
 
-            val current = ChunkPos(pos)
-            var nearest = oldChunks[0]
-            for(chunk in oldChunks) {
-                if(ignoreSelf && chunk == ChunkPos(pos))
-                    continue
+                val current = ChunkPos(pos)
+                var nearest = module.oldChunks.first()
+                for(chunk in module.oldChunks) {
+                    if(ignoreSelf && chunk == ChunkPos(pos))
+                        continue
 
-                if(chunk.getChebyshevDistance(current) <= nearest.getChebyshevDistance(current))
-                    nearest = chunk
+                    if(chunk.getChebyshevDistance(current) <= nearest.getChebyshevDistance(current))
+                        nearest = chunk
+                }
+
+                return nearest
             }
-            return nearest
         }
 
         fun getNearestNewChunk(pos: BlockPos, ignoreSelf: Boolean): ChunkPos {
-            val newChunks = getNearbyNewChunks()
-            if(newChunks.isEmpty()) return ChunkPos(pos)
+            val module = InteropUtils.getMeteorModule(NewChunks::class.java)
+            if(module == null || !module.isActive) return ChunkPos(BlockPos(0, 0, 0))
+            synchronized(module.newChunks) {
+                if (module.newChunks.isEmpty())
+                    return ChunkPos(BlockPos(0, 0, 0))
 
-            val current = ChunkPos(pos)
-            var nearest = newChunks[0]
-            for(chunk in newChunks) {
-                if(ignoreSelf && chunk == ChunkPos(pos))
-                    continue
+                val current = ChunkPos(pos)
+                var nearest = module.newChunks.first()
+                for (chunk in module.newChunks) {
+                    if (ignoreSelf && chunk == ChunkPos(pos))
+                        continue
 
-                if(chunk.getChebyshevDistance(current) <= nearest.getChebyshevDistance(current))
-                    nearest = chunk
+                    if (chunk.getChebyshevDistance(current) <= nearest.getChebyshevDistance(current))
+                        nearest = chunk
+                }
+
+                return nearest
             }
-            return nearest
         }
 
+        // Return 'true' if New Chunks is disabled
         fun isNewChunk(chunkPos: ChunkPos): Boolean {
-            return getNearbyNewChunks()
-                .contains(chunkPos)
+            val module = InteropUtils.getMeteorModule(NewChunks::class.java)
+            if(module == null || !module.isActive) return true
+            synchronized(module.newChunks) {
+                return module.newChunks.contains(chunkPos)
+            }
         }
 
         fun isOldChunk(chunkPos: ChunkPos): Boolean {
-            return getNearbyOldChunks()
-                .contains(chunkPos)
+            val module = InteropUtils.getMeteorModule(NewChunks::class.java)
+            if(module == null || !module.isActive) return true
+            synchronized(module.oldChunks) {
+                return module.oldChunks.contains(chunkPos)
+            }
         }
 
         fun isInNewChunk(pos: BlockPos): Boolean {
-            return getNearbyNewChunks()
-                .contains(ChunkPos(pos))
+            return isNewChunk(ChunkPos(pos))
         }
 
         fun isInOldChunk(pos: BlockPos): Boolean {
-            return getNearbyOldChunks()
-                     .contains(ChunkPos(pos))
+            return isOldChunk(ChunkPos(pos))
         }
 
     }

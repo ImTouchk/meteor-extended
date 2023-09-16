@@ -36,8 +36,8 @@ class NewChunks : Module(MeteorExtendedAddon.CATEGORY, "new-chunks", "Detects co
 
     // MAKE SURE TO DO SYNCHRONIZED CHECKS!!
 
-    public val newChunks = Collections.synchronizedSet(HashSet<ChunkPos>())
-    public val oldChunks = Collections.synchronizedSet(HashSet<ChunkPos>())
+    val newChunks = Collections.synchronizedSet(HashSet<ChunkPos>())
+    val oldChunks = Collections.synchronizedSet(HashSet<ChunkPos>())
 
     private fun render(box: Box, col: Color, shapeMode: ShapeMode, event: Render3DEvent) {
         event.renderer.box(box.minX, box.minY, box.minZ, box.maxX, box.maxY, box.maxZ, col, col, shapeMode, 0)
@@ -57,7 +57,7 @@ class NewChunks : Module(MeteorExtendedAddon.CATEGORY, "new-chunks", "Detects co
         synchronized(oldChunks) {
             for(c in oldChunks)
                 if(mc.getCameraEntity()?.blockPos?.isWithinDistance(Vec3i(c.startPos.x, c.startPos.y, c.startPos.z), 1024.0)!!)
-                    render(Box(c.startPos, c.startPos.add(16, renderHeight, 16)), newChunksColor, shapeMode, event)
+                    render(Box(c.startPos, c.startPos.add(16, renderHeight, 16)), oldChunksColor, shapeMode, event)
         }
     }
 
