@@ -38,14 +38,14 @@ class PathUtils {
         }
 
         fun getNearbyOldChunks(): List<ChunkPos> {
-            val module = InteropUtils.getMeteorModule("new-chunks") as NewChunks
-            if(!module.isActive) return listOf<ChunkPos>()
+            val module = InteropUtils.getMeteorModule(NewChunks::class.java)
+            if(module == null || !module.isActive) return listOf<ChunkPos>()
             return module.oldChunks.toList()
         }
 
         fun getNearbyNewChunks(): List<ChunkPos> {
-            val module = InteropUtils.getMeteorModule("new-chunks") as NewChunks
-            if(!module.isActive) return listOf<ChunkPos>()
+            val module = InteropUtils.getMeteorModule(NewChunks::class.java)
+            if(module == null || !module.isActive) return listOf<ChunkPos>()
             return module.newChunks.toList()
         }
 
