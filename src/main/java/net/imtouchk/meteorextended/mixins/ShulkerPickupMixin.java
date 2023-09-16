@@ -2,7 +2,7 @@ package net.imtouchk.meteorextended.mixins;
 
 import meteordevelopment.meteorclient.systems.Systems;
 import meteordevelopment.meteorclient.systems.modules.Modules;
-import net.imtouchk.meteorextended.modules.StashLooter;
+import net.imtouchk.meteorextended.modules.BaseRaider;
 import net.minecraft.entity.ItemEntity;
 import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.item.ItemStack;
@@ -19,11 +19,11 @@ public abstract class ShulkerPickupMixin {
 
     @Inject(at = @At("HEAD"), method = "onPlayerCollision(Lnet/minecraft/entity/player/PlayerEntity;)V")
     private void onPlayerCollision(PlayerEntity player, CallbackInfo ci) {
-        if(StashLooter.isShulkerBox(getStack().getItem())) {
-            var modules = Systems.get(Modules.class);
-            var stashLooter = (StashLooter)modules.get("StashLooter");
-            if(stashLooter != null)
-                stashLooter.onShulkerPickedUp();
-        }
+//        if(BaseRaider.isShulkerBox(getStack().getItem())) {
+//            var modules = Systems.get(Modules.class);
+//            var stashLooter = (BaseRaider)modules.get("StashLooter");
+//            if(stashLooter != null)
+//                stashLooter.onShulkerPickedUp();
+//        }
     }
 }
