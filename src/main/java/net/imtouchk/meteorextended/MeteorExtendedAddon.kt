@@ -6,7 +6,6 @@ import meteordevelopment.meteorclient.systems.modules.Category
 import meteordevelopment.meteorclient.systems.modules.Modules
 import net.imtouchk.meteorextended.modules.NewChunks
 import net.imtouchk.meteorextended.modules.BaseRaider
-import net.imtouchk.meteorextended.modules.Debugger
 import org.apache.logging.log4j.LogManager
 import org.apache.logging.log4j.Logger
 import java.lang.invoke.MethodHandles
@@ -25,7 +24,6 @@ class MeteorExtendedAddon : MeteorAddon() {
         }
 
         val modules = Modules.get()
-        modules.add(Debugger())
         modules.add(NewChunks())
         modules.add(BaseRaider())
     }
