@@ -1,25 +1,22 @@
 package net.imtouchk.meteorextended.modules
 
-import baritone.api.BaritoneAPI
-import baritone.api.pathing.goals.GoalGetToBlock
 import meteordevelopment.meteorclient.events.packets.InventoryEvent
 import meteordevelopment.meteorclient.events.world.TickEvent
 import meteordevelopment.meteorclient.settings.BoolSetting
 import meteordevelopment.meteorclient.settings.IntSetting
+import meteordevelopment.meteorclient.settings.ItemListSetting
 import meteordevelopment.meteorclient.systems.modules.Module
 import meteordevelopment.meteorclient.utils.Utils
 import meteordevelopment.meteorclient.utils.entity.EntityUtils
 import meteordevelopment.meteorclient.utils.world.BlockUtils
 import meteordevelopment.orbit.EventHandler
+import net.imtouchk.meteorextended.InteropUtils
 import net.imtouchk.meteorextended.MeteorExtendedAddon
 import net.imtouchk.meteorextended.PathUtils
-import net.minecraft.block.entity.BlockEntity
 import net.minecraft.block.entity.ChestBlockEntity
 import net.minecraft.block.entity.ShulkerBoxBlockEntity
 import net.minecraft.entity.Entity
-import net.minecraft.entity.ItemEntity
 import net.minecraft.entity.player.PlayerEntity
-import net.minecraft.item.Item
 import net.minecraft.item.Items
 import net.minecraft.util.Hand
 import net.minecraft.util.hit.BlockHitResult
@@ -33,11 +30,77 @@ import kotlin.system.measureTimeMillis
 class BaseRaider : Module(MeteorExtendedAddon.CATEGORY, "Base Raider", "Tries to find bases") {
     private val sgGeneral = settings.defaultGroup
 
-    private val maxSearchArea = sgGeneral.add(
-        IntSetting.Builder()
+    // TODO: Implement this check
+    private val maxSearchArea = sgGeneral.add(IntSetting.Builder()
         .name("max-search-area")
         .description("How far away from spawn should it search (in thousands)")
         .defaultValue(100)
+        .build()
+    )
+
+    private val chunksToAnalyzePerTick = sgGeneral.add(IntSetting.Builder()
+        .name("chunks-to-analyze-per-tick")
+        .description("How many chunks to analyze each tick (more = possibly worse performance/stuttering)")
+        .defaultValue(2)
+        .build()
+    )
+
+    private val searchThreshold = sgGeneral.add(IntSetting.Builder()
+        .name("loot-search-threshold")
+        .description("Start looking at a chunk when the probability of a base being there is equal or above this number")
+        .sliderRange(1, 100)
+        .defaultValue(70)
+        .build()
+    )
+
+    private val resetOnDisable = sgGeneral.add(BoolSetting.Builder()
+        .name("reset-on-disable")
+        .description("Reset all data when module is disabled.")
+        .defaultValue(false)
+        .build()
+    )
+
+    private val requireNewChunks = sgGeneral.add(BoolSetting.Builder()
+        .name("require-new-chunks")
+        .description("Require NewChunks module to be enabled.")
+        .defaultValue(true)
+        .build()
+    )
+
+    private val chatAnnouncer = sgGeneral.add(BoolSetting.Builder()
+        .name("chat-announcer")
+        .description("Announce in the chat when you have found loot")
+        .defaultValue(false)
+        .build()
+    )
+
+    private val desirableItems = sgGeneral.add(ItemListSetting.Builder()
+        .name("desirable-items")
+        .description("Items to look out for when searching chests")
+        .defaultValue(listOf(
+            Items.ENCHANTED_GOLDEN_APPLE,
+            Items.BEACON,
+            Items.ENDER_CHEST,
+
+            Items.SHULKER_BOX,
+            Items.BLACK_SHULKER_BOX,
+            Items.GREEN_SHULKER_BOX,
+            Items.MAGENTA_SHULKER_BOX,
+            Items.BLACK_SHULKER_BOX,
+            Items.BLUE_SHULKER_BOX,
+            Items.BROWN_SHULKER_BOX,
+            Items.CYAN_SHULKER_BOX,
+            Items.GRAY_SHULKER_BOX,
+            Items.LIGHT_BLUE_SHULKER_BOX,
+            Items.LIGHT_GRAY_SHULKER_BOX,
+            Items.LIME_SHULKER_BOX,
+            Items.PURPLE_SHULKER_BOX,
+            Items.RED_SHULKER_BOX,
+            Items.WHITE_SHULKER_BOX,
+            Items.YELLOW_SHULKER_BOX,
+            Items.PINK_SHULKER_BOX,
+            Items.ORANGE_SHULKER_BOX
+        ))
         .build()
     )
 
@@ -48,62 +111,16 @@ class BaseRaider : Module(MeteorExtendedAddon.CATEGORY, "Base Raider", "Tries to
         .build()
     )
 
+    private val chunkAnalyzer = ChunkAnalyzer(mc)
 
-    private val otherDesirableItems = listOf<Item>(
-        Items.ENCHANTED_GOLDEN_APPLE,
-        Items.BEACON,
-        Items.ENDER_CHEST
-    )
-    private enum class StopAction {
-        Disconnect,
-        Disable
-    }
+    // Design-wise, a Map would have been preferred here.
+    // However, it would probably be slower (and more annoying) to loop through the elements so I chose a MutableList instead
+    // TODO: Garbage collection on both of these
+    private val chunksAnalyzed = mutableListOf<ChunkAnalyzer.QueryResults>()
+    private val chunksWalkedThrough = mutableListOf<ChunkPos>()
+    private val chunksSearched = mutableListOf<ChunkPos>()
+    private var chunkToSearch: ChunkPos? = null
 
-    private enum class BotState {
-        Disabled,
-        Roaming,
-        Checking,
-        Cowering,
-        PickingDrop,
-        GoingToOldChunks,
-    }
-
-    private val stopAction = StopAction.Disconnect
-
-    private var currentState = BotState.Disabled
-    private var chestsToCheck = mutableListOf<BlockPos>()
-    private var checkedChests = mutableListOf<BlockPos>()
-    private var initialInventoryState = mutableListOf<Item>()
-
-    // TODO: Check if this shit actually works lol
-    private fun runFromPlayers() {
-        val players = mc.player?.clientWorld?.players ?: return
-        val botPos = mc.player?.pos ?: return
-
-        val averageDist = Vec3d(0.0, 0.0, 0.0)
-        for(player in players) {
-            val playerPos = player.pos
-            val botPlayerDis = playerPos.subtract(botPos)
-            averageDist.add(botPlayerDis)
-        }
-        averageDist.multiply((1 / players.size).toDouble())
-
-        val bestOpposite = averageDist.negate()
-            .normalize()
-            .multiply(100.0)
-
-        PathUtils.stopAny()
-        val goalProcess = BaritoneAPI.getProvider().primaryBaritone.customGoalProcess
-        val goal = GoalGetToBlock(BlockPos(
-            (botPos.x + bestOpposite.x).toInt(),
-            (botPos.y + bestOpposite.y).toInt(),
-            (botPos.z + bestOpposite.z).toInt(),
-        ))
-        goalProcess.setGoalAndPath(goal)
-
-        currentState = BotState.Cowering
-        debugInfo("Current state: COWERING (Destination: ${goal.x}, ${goal.y}, ${goal.z})")
-    }
 
     private fun getPlayersNearby(): List<Entity> {
         val players = mutableListOf<Entity>()
@@ -121,160 +138,200 @@ class BaseRaider : Module(MeteorExtendedAddon.CATEGORY, "Base Raider", "Tries to
         return getPlayersNearby().isNotEmpty()
     }
 
-    private fun isChestDesirable(entity: BlockEntity): Boolean {
-        if(PathUtils.isInNewChunk(entity.pos)) return false
-        return true
-        // TODO: add more, for example avoid search mineshaft chests
-    }
-
-    private fun lookForNewChests() {
-        for(entity in Utils.blockEntities()) {
-            if(!(entity is ChestBlockEntity || entity is ShulkerBoxBlockEntity)) continue
-            if(checkedChests.contains(entity.pos) || chestsToCheck.contains(entity.pos)) continue
-            if(!isChestDesirable(entity)) continue
-            chestsToCheck.add(entity.pos)
-        }
-
-        debugInfo("Found ${chestsToCheck.size} chests to check.")
-    }
-
-    private fun getNearestChest(): BlockPos {
-        var nearestChest = chestsToCheck[0]
-        for(chest in chestsToCheck) {
-            if(distanceToBlock(chest) < distanceToBlock(nearestChest))
-                nearestChest = chest
-        }
-        return nearestChest
-    }
-
-    private fun goToNearestChest() {
-        val chest = getNearestChest()
-
-        PathUtils.setGoal(chest)
-        currentState = BotState.Checking
-        debugInfo("Current state: CHECKING. (Destination: ${chest.x}, ${chest.y}, ${chest.z})")
-    }
-
     private fun roam() {
-        // TODO: check boundaries
+        if(chunksAnalyzed.isEmpty() || chunkToSearch != null)
+            return
 
-        PathUtils.explore(botPosition())
-        currentState = BotState.Roaming
-        debugInfo("Current state: ROAMING")
+        val currentGoal = PathUtils.getCurrentGoal()
+        if(currentGoal != BlockPos.ZERO && ChunkPos(currentGoal) != mc.player?.chunkPos)
+            return
+
+        var bestChunk = chunksAnalyzed.first()
+        var bestSurrounding = PathUtils.getSurroundingOldChunks(bestChunk.pos)
+        for(chunk in chunksAnalyzed) {
+            if(chunk.pos == mc.player?.chunkPos || chunksWalkedThrough.contains(chunk.pos))
+                continue
+
+            val surroundingOldChunks = PathUtils.getSurroundingOldChunks(chunk.pos)
+            if(surroundingOldChunks >= bestSurrounding) {
+                bestChunk = chunk
+                bestSurrounding = surroundingOldChunks
+            }
+        }
+
+        if(bestSurrounding == 0 && !PathUtils.isExploring()) {
+            PathUtils.explore(mc.player?.pos!!)
+            info("No old chunks found. Using Baritone roam feature...")
+            return
+        }
+
+        val goal = bestChunk.pos.getCenterAtY(mc.player?.blockY!!)
+        if(PathUtils.getCurrentGoal() == goal)
+            return
+
+        PathUtils.setGoal(goal)
+        debugInfo("BaseRaider.roam: Determined chunk ${bestChunk.pos} to be the best, with $bestSurrounding old chunks neighboring it")
+        info("Roaming...")
     }
 
-    fun onShulkerPickedUp() {
-        debugInfo("Shulker box picked up")
-        roam()
+    private fun analyzeNearbyChunks() {
+        val chunks = Utils.chunks()
+        var chunksAnalyzed = 0
+        chunksLoop@ for(chunk in chunks) {
+            for(analyzed in this.chunksAnalyzed)
+                if(analyzed.pos == chunk.pos)
+                    continue@chunksLoop
+
+            lateinit var result: ChunkAnalyzer.QueryResults
+            val elapsed = measureTimeMillis { result = chunkAnalyzer.queryChunk(chunk.pos) }
+            this.chunksAnalyzed.add(result)
+            debugInfo("BaseRaider.analyzeNearbyChunks: Analyzed ${chunk.pos} in ${elapsed}ms. Base probability: ${result.baseProbability}")
+
+            chunksAnalyzed++
+            if(chunksAnalyzed >= chunksToAnalyzePerTick.get())
+                return
+        }
+    }
+
+    private fun searchChunk() {
+        if(chunkToSearch == null) {
+            debugInfo("BaseRaider.searchChunk: Function called with null chunkToCheck value")
+            return
+        }
+
+        val chunkData = getChunkQueryResult()
+        if(chunkData == null) {
+            debugInfo("BaseRaider.searchChunk: Could not find query results for chunk $chunkToSearch")
+            return
+        }
+
+        val goal = PathUtils.getCurrentGoal()
+        if(ChunkPos(goal) == chunkToSearch) {
+            if(!goal.isWithinDistance(mc.player?.pos, 5.0)) {
+                return
+            }
+
+            for(container in chunkData.potentialLoot) {
+                if(container.pos == goal) {
+                    if(container is ShulkerBoxBlockEntity) {
+                        // TODO: Actually break it (and pick it up from the ground!)
+                        info("Not implemented")
+                    } else if(container is ChestBlockEntity) {
+                        val block = BlockHitResult(
+                            Vec3d(goal.x.toDouble(), goal.y.toDouble(), goal.z.toDouble()),
+                            Direction.UP,
+                            goal,
+                            false
+                        )
+
+                        BlockUtils.interact(block, Hand.MAIN_HAND, true)
+                    }
+
+                    chunkData.potentialLoot.remove(container)
+                    break
+                }
+            }
+
+            // TODO: Implement item drop pickup
+        }
+
+        goToNextLoot()
+    }
+
+    private fun goToNextLoot() {
+        if(chunkToSearch == null) {
+            debugInfo("BaseRaider.goToNextLoot: Function called, but chunkToSearch was null")
+            return
+        }
+
+        val chunkData = getChunkQueryResult()
+        if(chunkData == null) {
+            debugInfo("BaseRaider.goToNextLoot: Could not find query results for chunk $chunkToSearch")
+            return
+        }
+
+        if(chunkData.potentialLoot.isEmpty() && chunkData.itemDrops.isEmpty()) {
+            info("Finished searching chunk")
+            chunksSearched.add(chunkToSearch!!)
+            chunkToSearch = null
+        } else if(chunkData.potentialLoot.isEmpty()) {
+            val itemDrop = chunkData.itemDrops.first()
+            PathUtils.setGoal(itemDrop.blockPos)
+            debugInfo("BaseRaider.goToNextLoot: Going to item drop at ${itemDrop.blockPos}")
+            // TODO: Handle pickup data
+        } else {
+            val potentialLoot = chunkData.potentialLoot.first()
+            PathUtils.setGoal(potentialLoot.pos)
+            debugInfo("BaseRaider.goToNextLoot: Going to potential valuable container at ${potentialLoot.pos}")
+        }
+    }
+
+    private fun getChunkQueryResult(): ChunkAnalyzer.QueryResults? {
+        for(chunk in chunksAnalyzed)
+            if(chunk.pos == chunkToSearch)
+                return chunk
+
+        return null
+    }
+
+    private fun checkForBases() {
+        if(chunkToSearch != null) {
+            searchChunk()
+            return
+        }
+
+        for(chunk in chunksAnalyzed) {
+            if(chunk.baseProbability >= searchThreshold.get() && !chunksSearched.contains(chunk.pos)) {
+                if(chunk.potentialLoot.isEmpty() && chunk.itemDrops.isEmpty()) {
+                    chunksSearched.add(chunk.pos)
+                    debugInfo("BaseRaider.checkForBases: Chunk meets search threshold (probability of being a base: ${chunk.baseProbability}), but there are no potential valuables. Skipping...")
+                } else {
+                    chunkToSearch = chunk.pos
+                    debugInfo("BaseRaider.checkForBases: Chunk ${chunk.pos} meets search threshold (probability of being a base: ${chunk.baseProbability})")
+                    info("Found chunk worth checking.")
+                }
+            }
+        }
     }
 
     @EventHandler
     private fun onInventoryOpen(event: InventoryEvent) {
-        // Could have only one for loop here but shulkers are higher priority than anything else
-        for(stack in event.packet.contents)
-            if(isShulkerBox(stack.item))
+        // TODO: Either handle items in priority (i.e. shulkers over anything else) or do inventory cleanups
+        val contents = event.packet.contents
+        var foundValuables = false
+        for(stack in contents) {
+            if(desirableItems.get().contains(stack.item)) {
                 mc.player?.inventory?.insertStack(stack)
+                foundValuables = true
+            }
+        }
 
-        for(stack in event.packet.contents)
-            if(otherDesirableItems.contains(stack.item))
-                mc.player?.inventory?.insertStack(stack)
+        info("Chest searched. Found valuables: ${if (foundValuables) "yes" else "no"})")
+        if(chatAnnouncer.get() && foundValuables) {
+            // TODO: send chat message (how the fuck do I do it?)
+        }
     }
-
-    val checkedChunks = mutableListOf<ChunkPos>()
-    val chunkAnalyzer = ChunkAnalyzer(mc)
 
     @EventHandler
     private fun onTick(event: TickEvent.Pre) {
         assert(mc.world != null)
 
-        val chunks = Utils.chunks()
-        for(chunk in chunks) {
-            if(checkedChunks.contains(chunk.pos))
-                continue
-
-            lateinit var result: ChunkAnalyzer.QueryResults
-            val elapsed = measureTimeMillis { result = chunkAnalyzer.queryChunk(chunk.pos) }
-            checkedChunks.add(chunk.pos)
-            println("========== ${chunk.pos} ANALYZED IN ${elapsed}ms")
-            println("Base probability: ${result.baseProbability}")
-            println("Potential valuables: ${result.potentialValuables}")
-            return
+        if(requireNewChunks.get()) {
+            val module = InteropUtils.getMeteorModule(NewChunks::class.java)
+            if(!module.isActive) {
+                module.toggle()
+                info("Enabled NewChunks module.")
+            }
         }
 
+        if(!chunksWalkedThrough.contains(mc.player?.chunkPos))
+            chunksWalkedThrough.add(mc.player?.chunkPos!!)
 
-        return
+        analyzeNearbyChunks()
+        roam()
+        checkForBases()
 
-        if(currentState == BotState.Disabled)
-            return
-
-        when(currentState) {
-            BotState.Roaming -> {
-                if(PathUtils.isInNewChunk(BlockPos(
-                        botPosition().x.toInt(),
-                        botPosition().y.toInt(),
-                        botPosition().z.toInt()
-                ))) {
-                    // TODO: go away from new chunks
-                }
-
-                if(chestsToCheck.isEmpty())
-                    lookForNewChests()
-                else
-                    goToNearestChest()
-            }
-            BotState.PickingDrop -> {
-                val entities = mc.world?.entities!!
-                for(entity in entities) {
-                    if(entity !is ItemEntity || entity.distanceTo(mc.player) > 5) continue
-
-                    val item = entity as ItemEntity
-                    if(!isShulkerBox(item.stack.item)) continue
-
-                    PathUtils.setGoal(BlockPos(
-                        entity.pos.x.toInt(),
-                        entity.pos.y.toInt(),
-                        entity.pos.z.toInt()
-                    ))
-                    currentState = BotState.PickingDrop
-                }
-            }
-            BotState.Checking -> {
-                val chest = getNearestChest()
-                if (distanceToBlock(chest) <= 5) {
-                    val entity = mc.player?.clientWorld?.getBlockEntity(chest)
-                    checkedChests.add(chest)
-                    chestsToCheck.remove(chest)
-
-                    if(entity is ShulkerBoxBlockEntity) {
-                        debugInfo("Shulker box!")
-
-                        if(!BlockUtils.canBreak(entity.pos)) return
-                        BlockUtils.breakBlock(entity.pos, true)
-                        currentState = BotState.PickingDrop
-                    } else {
-                        val chestPos = entity?.pos!!
-                        val block = BlockHitResult(
-                            Vec3d(chestPos.x.toDouble(), chestPos.y.toDouble(), chestPos.z.toDouble()),
-                            Direction.UP,
-                            chestPos,
-                            false
-                        )
-                        BlockUtils.interact(block, Hand.MAIN_HAND, true)
-
-                    }
-                    debugInfo("Chest checked")
-                    roam()
-                } else {
-                    val goalProcess = BaritoneAPI.getProvider().primaryBaritone.customGoalProcess
-                    if(!goalProcess.isActive) goToNearestChest()
-                    val goal = goalProcess.goal as GoalGetToBlock
-                    if(!chestsToCheck.contains(BlockPos(goal.x, goal.y, goal.z)))
-                        goToNearestChest()
-                }
-            }
-            else -> {}
-        }
-
+        // TODO: Inventory cleanup
         // Remove useless items
 //        val inventory = mc.player?.inventory!!
 //        for(stack in inventory.main) {
@@ -285,87 +342,55 @@ class BaseRaider : Module(MeteorExtendedAddon.CATEGORY, "Base Raider", "Tries to
 //        }
 
         // Player check
-        if(arePlayersNearby())
-            stop()
-    }
-
-    private fun stop() {
-        PathUtils.stopAny()
-        when(stopAction) {
-            StopAction.Disable -> {
-                currentState = BotState.Disabled
-                toggle()
-            }
-            StopAction.Disconnect -> {
-                currentState = BotState.Disabled
-                mc.world?.disconnect()
-                toggle()
-            }
-            else -> throw Exception()
+        if(arePlayersNearby()) {
+            // TODO: Disconnect
         }
     }
 
     override fun onActivate() {
-        return
+//        val inventory = mc.player?.inventory!!
+//        for(stack in inventory.main) {
+//            initialInventoryState.add(stack.item)
+//        }
 
-        val inventory = mc.player?.inventory!!
-        for(stack in inventory.main) {
-            initialInventoryState.add(stack.item)
+        if(debugMode.get()) {
+            info("Debugger data")
+
+            info("PathUtils.hasActiveJob: ${PathUtils.hasActiveJob()}")
+
+            info("PathUtils.getNearbyOldChunks: ${PathUtils.getNearbyOldChunks()}")
+            info("PathUtils.getNearestOldChunk(): ${PathUtils.getNearestOldChunk(mc.player?.blockPos!!, false)}")
+            info("PathUtils.getNearestOldChunk(ignoreSelf): ${PathUtils.getNearestOldChunk(mc.player?.blockPos!!, true)}")
+
+            info("PathUtils.getNearbyNewChunks: ${PathUtils.getNearbyNewChunks()}")
+            info("PathUtils.getNearestNewChunk(): ${PathUtils.getNearestNewChunk(mc.player?.blockPos!!, false)}")
+            info("PathUtils.getNearestNewChunk(ignoreSelf): ${PathUtils.getNearestNewChunk(mc.player?.blockPos!!, true)}")
+
+            info("PathUtils.isInOldChunk(@player): ${PathUtils.isInOldChunk(mc.player?.blockPos!!)}")
+            info("PathUtils.isInNewChunk(@player): ${PathUtils.isInNewChunk(mc.player?.blockPos!!)}")
+
+            info("-----------------")
         }
 
-        roam()
+        info("BaseRaider module is now active")
     }
 
     override fun onDeactivate() {
-        return
+        chunkToSearch = null
 
         PathUtils.stopAny()
-        initialInventoryState.clear()
-        currentState = BotState.Disabled
+        if(resetOnDisable.get()) {
+            chunksSearched.clear()
+            chunksWalkedThrough.clear()
+            chunksAnalyzed.clear()
+        }
+
+        info("BaseRaider module has been deactivated")
     }
 
     private fun debugInfo(message: String) {
+        println(message)
         if(debugMode.get())
             info(message)
-    }
-
-    private fun botPosition(): Vec3d {
-        return mc.player?.pos!!
-    }
-
-    private fun distanceToBlock(position: BlockPos): Double {
-        return botPosition().distanceTo(Vec3d(
-            position.x.toDouble(),
-            position.y.toDouble(),
-            position.z.toDouble()
-        ))
-    }
-
-    companion object {
-        @JvmStatic
-        fun isShulkerBox(item: Item): Boolean {
-            val shulkerBlockItems = listOf<Item>(
-                Items.SHULKER_BOX,
-                Items.BLACK_SHULKER_BOX,
-                Items.GREEN_SHULKER_BOX,
-                Items.MAGENTA_SHULKER_BOX,
-                Items.BLACK_SHULKER_BOX,
-                Items.BLUE_SHULKER_BOX,
-                Items.BROWN_SHULKER_BOX,
-                Items.CYAN_SHULKER_BOX,
-                Items.GRAY_SHULKER_BOX,
-                Items.LIGHT_BLUE_SHULKER_BOX,
-                Items.LIGHT_GRAY_SHULKER_BOX,
-                Items.LIME_SHULKER_BOX,
-                Items.PURPLE_SHULKER_BOX,
-                Items.RED_SHULKER_BOX,
-                Items.WHITE_SHULKER_BOX,
-                Items.YELLOW_SHULKER_BOX,
-                Items.PINK_SHULKER_BOX,
-                Items.ORANGE_SHULKER_BOX
-            )
-
-            return shulkerBlockItems.contains(item)
-        }
     }
 }
