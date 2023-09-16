@@ -4,6 +4,8 @@ import meteordevelopment.meteorclient.events.packets.PacketEvent
 import meteordevelopment.meteorclient.events.render.Render3DEvent
 import meteordevelopment.meteorclient.renderer.ShapeMode
 import meteordevelopment.meteorclient.settings.BoolSetting
+import meteordevelopment.meteorclient.settings.ColorSetting
+import meteordevelopment.meteorclient.settings.IntSetting
 import net.imtouchk.meteorextended.MeteorExtendedAddon
 import meteordevelopment.meteorclient.systems.modules.Module
 import meteordevelopment.meteorclient.utils.render.color.Color
@@ -18,21 +20,43 @@ import net.minecraft.util.math.*
 import net.minecraft.world.chunk.WorldChunk
 import java.util.Collections
 
+/*
+    DISCLAIMER!! This code is a modified version of meteor-rejects' NewChunks module
+    Source: https://github.com/AntiCope/meteor-rejects/blob/master/src/main/java/anticope/rejects/modules/NewChunks.java
+ */
+
 class NewChunks : Module(MeteorExtendedAddon.CATEGORY, "new-chunks", "Detects completely new chunks using certain traits of them") {
-    private val sgGeneral = settings.defaultGroup
     private val sgRender = settings.createGroup("Render")
 
     private val renderEnable = sgRender.add(BoolSetting.Builder()
         .name("enable-rendering")
-        .description("Enable visualization of newchunks module")
+        .description("Enable visualization of NewChunks module")
         .defaultValue(false)
         .build()
     )
 
-    private val renderHeight = 0
+    private val newChunksColor = sgRender.add(ColorSetting.Builder()
+        .name("new-chunks-color")
+        .description("Color of new chunks")
+        .defaultValue(SettingColor(255, 0, 0, 75))
+        .build()
+    )
+
+    private val oldChunksColor = sgRender.add(ColorSetting.Builder()
+        .name("new-chunks-color")
+        .description("Color of new chunks")
+        .defaultValue(SettingColor(0, 255, 0, 75))
+        .build()
+    )
+
+    private val renderHeight = sgRender.add(IntSetting.Builder()
+        .name("render-height")
+        .description("Height at which to render the visualization")
+        .defaultValue(0)
+        .build()
+    )
+
     private val shapeMode = ShapeMode.Both
-    private val newChunksColor = SettingColor(255, 0, 0, 75)
-    private val oldChunksColor = SettingColor(0, 255, 0, 75)
 
     // MAKE SURE TO DO SYNCHRONIZED CHECKS!!
 
@@ -51,13 +75,13 @@ class NewChunks : Module(MeteorExtendedAddon.CATEGORY, "new-chunks", "Detects co
         synchronized(newChunks) {
             for(c in newChunks)
                 if(mc.getCameraEntity()?.blockPos?.isWithinDistance(Vec3i(c.startPos.x, c.startPos.y, c.startPos.z), 1024.0)!!)
-                    render(Box(c.startPos, c.startPos.add(16, renderHeight, 16)), newChunksColor, shapeMode, event)
+                    render(Box(c.startPos, c.startPos.add(16, renderHeight.get(), 16)), newChunksColor.get(), shapeMode, event)
         }
 
         synchronized(oldChunks) {
             for(c in oldChunks)
                 if(mc.getCameraEntity()?.blockPos?.isWithinDistance(Vec3i(c.startPos.x, c.startPos.y, c.startPos.z), 1024.0)!!)
-                    render(Box(c.startPos, c.startPos.add(16, renderHeight, 16)), oldChunksColor, shapeMode, event)
+                    render(Box(c.startPos, c.startPos.add(16, renderHeight.get(), 16)), oldChunksColor.get(), shapeMode, event)
         }
     }
 
